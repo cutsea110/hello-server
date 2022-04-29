@@ -7,21 +7,33 @@ use std::{
     time::Duration,
 };
 
+trait FnBox {
+    fn call_box(self: Box<Self>);
+}
+impl<F: FnOnce()> FnBox for F {
+    fn call_box(self: Box<Self>) {
+        (*self)()
+    }
+}
+
 struct Worker {
     id: usize,
     thread: thread::JoinHandle<()>,
 }
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Self {
-        let thread = thread::spawn(|| {
-            receiver;
+        let thread = thread::spawn(move || loop {
+            let job = receiver.lock().unwrap().recv().expect("receive job");
+            println!("Worker {} got a job; executing.", id);
+
+            job.call_box();
         });
 
         Self { id, thread }
     }
 }
 
-struct Job;
+type Job = Box<dyn FnBox + Send + 'static>;
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
@@ -44,6 +56,9 @@ impl ThreadPool {
     where
         F: FnOnce() + Send + 'static,
     {
+        let job = Box::new(f);
+
+        self.sender.send(job).expect("send job");
     }
 }
 
