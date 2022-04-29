@@ -12,7 +12,10 @@ fn main() {
     for stream in listener.incoming() {
         let stream = stream.expect("get stream");
         println!("Connection established!: {:?}", stream);
-        handle_connection(stream);
+
+        thread::spawn(|| {
+            handle_connection(stream);
+        });
     }
 }
 
