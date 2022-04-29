@@ -1,3 +1,5 @@
+use env_logger::Env;
+use log::{info, trace, warn};
 use std::{
     fs::File,
     io::{Read, Write},
@@ -26,11 +28,11 @@ impl Worker {
             let message = receiver.lock().unwrap().recv().expect("receive");
             match message {
                 Message::NewJob(job) => {
-                    println!("Worker {} got a job; executing.", id);
+                    trace!("Worker {} got a job; executing.", id);
                     job.call_box();
                 }
                 Message::Terminate => {
-                    println!("Worker {} was told to terminate.", id);
+                    trace!("Worker {} was told to terminate.", id);
 
                     break;
                 }
@@ -79,7 +81,7 @@ impl ThreadPool {
 }
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        println!("Sending terminate message to all workers.");
+        trace!("Sending terminate message to all workers.");
 
         for _ in &mut self.workers {
             self.sender
@@ -87,10 +89,10 @@ impl Drop for ThreadPool {
                 .expect("send terminate");
         }
 
-        println!("Shutting down all workers.");
+        trace!("Shutting down all workers.");
 
         for worker in &mut self.workers {
-            println!("Shutting down worker {}", worker.id);
+            trace!("Shutting down worker {}", worker.id);
             if let Some(thread) = worker.thread.take() {
                 thread.join().expect("wait worker finishing.");
             }
@@ -99,19 +101,21 @@ impl Drop for ThreadPool {
 }
 
 fn main() {
+    env_logger::Builder::from_env(Env::default().default_filter_or("warn")).init();
+
     let listener = TcpListener::bind("127.0.0.1:7878").expect("bind 127.0.0.1:7878");
     let pool = ThreadPool::new(4);
 
     for stream in listener.incoming() {
         let stream = stream.expect("get stream");
-        println!("Connection established!: {:?}", stream);
+        info!("Connection established!: {:?}", stream);
 
         pool.execute(|| {
             handle_connection(stream);
         });
     }
 
-    println!("Shutting down.");
+    info!("Shutting down.");
 }
 
 fn handle_connection(mut stream: TcpStream) {
@@ -124,7 +128,7 @@ fn handle_connection(mut stream: TcpStream) {
     let (status_line, filename) = if buffer.starts_with(get) {
         ("HTTP/1.1 200 OK\r\n\r\n", "src/echo.html")
     } else if buffer.starts_with(sleep) {
-        println!("heavy page...");
+        warn!("heavy page...");
         thread::sleep(Duration::from_secs(5));
         ("HTTP/1.1 200 OK\r\n\r\n", "src/echo.html")
     } else {
@@ -138,6 +142,7 @@ fn handle_connection(mut stream: TcpStream) {
 
     let response = format!("{}{}", status_line, contents);
 
+    info!("GET: {}", filename);
     stream.write(response.as_bytes()).expect("write response");
     stream.flush().expect("send response");
 }
