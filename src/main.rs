@@ -21,12 +21,20 @@ struct Worker {
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Self {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Self {
         let thread = thread::spawn(move || loop {
-            let job = receiver.lock().unwrap().recv().expect("receive job");
-            println!("Worker {} got a job; executing.", id);
+            let message = receiver.lock().unwrap().recv().expect("receive");
+            match message {
+                Message::NewJob(job) => {
+                    println!("Worker {} got a job; executing.", id);
+                    job.call_box();
+                }
+                Message::Terminate => {
+                    println!("Worker {} was told to terminate.", id);
 
-            job.call_box();
+                    break;
+                }
+            }
         });
 
         Self {
@@ -36,11 +44,16 @@ impl Worker {
     }
 }
 
+enum Message {
+    NewJob(Job),
+    Terminate,
+}
+
 type Job = Box<dyn FnBox + Send + 'static>;
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Message>,
 }
 impl ThreadPool {
     pub fn new(size: usize) -> Self {
@@ -61,15 +74,25 @@ impl ThreadPool {
     {
         let job = Box::new(f);
 
-        self.sender.send(job).expect("send job");
+        self.sender.send(Message::NewJob(job)).expect("send job");
     }
 }
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        println!("Sending terminate message to all workers.");
+
+        for _ in &mut self.workers {
+            self.sender
+                .send(Message::Terminate)
+                .expect("send terminate");
+        }
+
+        println!("Shutting down all workers.");
+
         for worker in &mut self.workers {
-            println!("Shutting down worker: {}", worker.id);
+            println!("Shutting down worker {}", worker.id);
             if let Some(thread) = worker.thread.take() {
-                thread.join().expect("wait thread finishing.");
+                thread.join().expect("wait worker finishing.");
             }
         }
     }
@@ -87,6 +110,8 @@ fn main() {
             handle_connection(stream);
         });
     }
+
+    println!("Shutting down.");
 }
 
 fn handle_connection(mut stream: TcpStream) {
